@@ -1,0 +1,112 @@
+
+import os
+import shutil
+import time
+import random
+import chromadb
+from sentence_transformers import SentenceTransformer
+from . import config
+
+class MathNotebookDB:
+    def __init__(self, db_path=None, reset=False):
+        self.db_path = db_path or config.DB_PATH
+        if reset and os.path.exists(self.db_path):
+            shutil.rmtree(self.db_path)
+            
+        print(f"📚 加载知识库: {self.db_path}...")
+        self.client = chromadb.PersistentClient(path=self.db_path)
+        # 最终的高质量经验库
+        self.collection = self.client.get_or_create_collection(name="elite_strategies")
+        
+        # 临时错题检索库 (用于泛化验证)
+        self.failed_collection = self.client.get_or_create_collection(name="temp_failed_cases")
+        
+        self.embedder = SentenceTransformer('all-MiniLM-L6-v2', device="cpu")
+
+    def index_failed_cases(self, failed_cases):
+        """将错题建立临时索引，用于后续的泛化验证"""
+        if not failed_cases: return
+        print("🧠 正在构建错题向量索引 (用于泛化验证)...")
+        
+        # 注意：这里假设 failed_cases 里的 item 已经有了 'abstract_question' 字段
+        # 如果没有，回退到使用 'question'
+        documents = []
+        for c in failed_cases:
+            if 'abstract_question' in c and c['abstract_question']:
+                documents.append(c['abstract_question'])
+            else:
+                documents.append(c['question'])
+
+        ids = [str(c['id']) for c in failed_cases]
+        embeddings = self.embedder.encode(documents).tolist()
+        # 存 GT 方便验证
+        metadatas = [{"ground_truth": c['ground_truth']} for c in failed_cases]
+        
+        # 先清空旧的
+        try:
+            self.client.delete_collection("temp_failed_cases")
+            self.failed_collection = self.client.create_collection("temp_failed_cases")
+        except:
+            pass
+            
+        self.failed_collection.add(ids=ids, embeddings=embeddings, documents=documents, metadatas=metadatas)
+
+    def search_similar_failed_case(self, trigger_text, exclude_id):
+        """根据 Trigger 搜索相似的错题"""
+        embedding = self.embedder.encode(trigger_text).tolist()
+        # 搜 2 个，防止第 1 个是自己
+        results = self.failed_collection.query(query_embeddings=[embedding], n_results=2)
+        
+        if not results['ids'][0]: return None
+        
+        for i, found_id in enumerate(results['ids'][0]):
+            if str(found_id) != str(exclude_id):
+                return {
+                    "id": int(found_id),
+                    "question": results['documents'][0][i],
+                    "ground_truth": results['metadatas'][0][i]['ground_truth']
+                }
+        return None
+
+    def save_experience_batch(self, experiences):
+        if not experiences: return
+        triggers = [e['trigger'] for e in experiences]
+        embeddings = self.embedder.encode(triggers).tolist()
+        ids = [f"exp_{int(time.time())}_{random.randint(10000,99999)}_{i}" for i in range(len(experiences))]
+        documents = [e['rule_text'] for e in experiences]
+        metadatas = [{"trigger": e['trigger'], "source_question": e['original_q'][:200]} for e in experiences]
+        self.collection.add(ids=ids, embeddings=embeddings, documents=documents, metadatas=metadatas)
+        print(f"💾 [入库] {len(experiences)} 条经验通过双重验证，已存入知识库")
+
+    def batch_search(self, queries, top_k=3, threshold=0.7):
+        """用于 RAG 推理时的批量检索"""
+        if not queries: return []
+        
+        q_embeddings = self.embedder.encode(
+            queries, 
+            batch_size=64, 
+            show_progress_bar=False, 
+            convert_to_numpy=True
+        ).tolist()
+        
+        search_results = self.collection.query(
+            query_embeddings=q_embeddings,
+            n_results=top_k
+        )
+        
+        retrieved_contexts = []
+        for i in range(len(queries)):
+            valid_hints = []
+            if search_results['ids'][i]:
+                for j in range(len(search_results['ids'][i])):
+                    distance = search_results['distances'][i][j]
+                    doc_text = search_results['documents'][i][j]
+                    metadata = search_results['metadatas'][i][j]
+                    if distance < threshold:
+                        valid_hints.append({
+                            "strategy": doc_text,
+                            "trigger": metadata.get('trigger', 'Unknown'),
+                            "score": 1 - distance
+                        })
+            retrieved_contexts.append(valid_hints)
+        return retrieved_contexts
