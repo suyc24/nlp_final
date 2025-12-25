@@ -1,0 +1,11 @@
+transformers
+datasets
+torch
+accelerate
+chromadb
+sentence_transformers
+peft 
+bitsandbytes
+vllm
+jupyter
+ipywidgets
