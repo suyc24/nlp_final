@@ -98,7 +98,22 @@ class StudentClient:
         prompts_list = [prompts.construct_base_prompt(q) for q in questions]
         return self.llm.generate(prompts_list, self.params_greedy, use_tqdm=True)
 
+# 文件: llm_client.py
+# 类: StudentClient
+
     def generate_rag(self, questions, hints_list):
         """RAG 生成"""
-        prompts_list = [prompts.construct_rag_prompt(q, h) for q, h in zip(questions, hints_list)]
+        # 修改前（你的原代码）:
+        # prompts_list = [prompts.construct_rag_prompt(q, h) for q, h in zip(questions, hints_list)]
+        
+        # 修改后：增加显式回退逻辑
+        prompts_list = []
+        for q, h in zip(questions, hints_list):
+            # 核心逻辑：如果 hint 为空，完全模仿 Baseline 的行为
+            if not h:
+                prompts_list.append(prompts.construct_base_prompt(q))
+            else:
+                prompts_list.append(prompts.construct_rag_prompt(q, h))
+        
+        # 使用 params_greedy 确保采样参数和 Baseline 一致
         return self.llm.generate(prompts_list, self.params_greedy, use_tqdm=True)

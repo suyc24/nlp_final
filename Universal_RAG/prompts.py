@@ -74,28 +74,49 @@ Pattern:<|im_end|>
 <|im_start|>assistant
 """
 
-def construct_rag_prompt(q, hints):
-    if not hints: return construct_base_prompt(q)
+# def construct_rag_prompt(q, hints):
+#     if not hints: return construct_base_prompt(q)
     
-    strategies_text = ""
-    for idx, h in enumerate(hints):
-        strategies_text += f"Strategy {idx+1} (Matched Scenario: {h['trigger']}):\n{h['strategy']}\n\n"
+#     strategies_text = ""
+#     for idx, h in enumerate(hints):
+#         strategies_text += f"Strategy {idx+1} (Matched Scenario: {h['trigger']}):\n{h['strategy']}\n\n"
     
-    content = f"""Reference Knowledge:
-{strategies_text}
----
-[Demonstration of how to use the Strategy]
-Example Scenario:
-Reference Strategy: "To find the total distance, multiply the speed by the time."
-Question: A car travels at 60 mph for 3 hours. How far does it go?
-Reasoning: The Reference Strategy suggests multiplying speed by time. 
-Speed = 60, Time = 3. 
-Calculation: 60 * 3 = 180.
-The answer is \\boxed{{180}}.
+#     content = f"""Reference Knowledge:
+# {strategies_text}
+# ---
+# [Demonstration of how to use the Strategy]
+# Example Scenario:
+# Reference Strategy: "To find the total distance, multiply the speed by the time."
+# Question: A car travels at 60 mph for 3 hours. How far does it go?
+# Reasoning: The Reference Strategy suggests multiplying speed by time. 
+# Speed = 60, Time = 3. 
+# Calculation: 60 * 3 = 180.
+# The answer is \\boxed{{180}}.
 
----
-[Your Turn]
+# ---
+# [Your Turn]
+# Question: {q}
+# Instruction: First, check if any of the "Reference Knowledge" above applies to this question. If yes, explicitly use that logic. Reason step-by-step, and put your final answer within \\boxed{{}}."""
+
+#     return f"<|im_start|>user\n{content}<|im_end|>\n<|im_start|>assistant\n"
+
+def construct_rag_prompt(q, hints):
+    # 1. 必须保留的回退逻辑 (配合你 llm_client 的修改，双重保险)
+    if not hints: 
+        return construct_base_prompt(q)
+    
+    # 2. 极简拼接
+    # 对于小模型，不要写 "Matched Scenario"，直接给干货(Strategy)
+    # 使用列表符号 "-" 引导，清晰且节省 Token
+    strategies_text = "\n".join([f"- {h['strategy']}" for h in hints])
+    
+    # 3. 构造 Content
+    # 结构：[Tips] -> [Question] -> [Instruction]
+    # 这里的 Instruction 和 Base Prompt 保持高度一致
+    content = f"""Reference Tips:
+{strategies_text}
+
 Question: {q}
-Instruction: First, check if any of the "Reference Knowledge" above applies to this question. If yes, explicitly use that logic. Reason step-by-step, and put your final answer within \\boxed{{}}."""
+Please reason step-by-step, using the tips above if helpful, and put your final answer within \\boxed{{}}."""
 
     return f"<|im_start|>user\n{content}<|im_end|>\n<|im_start|>assistant\n"

@@ -1,120 +1,134 @@
 import sys
 import os
 import json
+import random
+from datasets import load_dataset
+
+# 确保能引用到上一级目录
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
 
 from Universal_RAG.core import PrincipleRAGModel
 from Universal_RAG.math_utils import MathEvaluator
-from datasets import load_dataset
-import random
 
 def main():
     # 1. 准备数据 (MATH Test)
     print("📂 加载 MATH 数据集 (Test Split)...")
     try:
+        # 尝试加载 HuggingFace 的 MATH 数据集
         dataset = load_dataset("jeggers/competition_math", "original", split='test')
-    except:
-        dataset = load_dataset("lighteval/MATH", "all", split='test')
+    except Exception as e:
+        print(f"⚠️ 加载 jeggers/competition_math 失败，尝试 lighteval/MATH... ({e})")
+        try:
+            dataset = load_dataset("lighteval/MATH", "all", split='test')
+        except Exception as e2:
+            print(f"❌ 无法加载数据集: {e2}")
+            return
     
-    # 采样 50 条用于演示
+    # 固定随机种子以便复现
+    random.seed(42)
+    
+    # 采样 200 条用于快速评测 (如果想跑全量，注释掉切片)
     indices = list(range(len(dataset)))
     random.shuffle(indices)
-    # indices = indices[:50]
+    # indices = indices[:200]
     
-    questions = [dataset[i]['problem'] for i in indices]
-    ground_truths = [dataset[i]['solution'] for i in indices]
-    dataset_types = [dataset[i]['type'] for i in indices]
+    # 兼容不同的数据集列名 (problem/question, solution/answer)
+    questions = []
+    ground_truths = []
+    dataset_types = []
+    
+    for i in indices:
+        item = dataset[i]
+        questions.append(item.get('problem') or item.get('question'))
+        ground_truths.append(item.get('solution') or item.get('answer'))
+        dataset_types.append(item.get('type', 'Unknown'))
 
     # 2. 初始化模型
-    # 使用用户指定的 DB 路径
+    print("🤖 初始化模型...")
     model = PrincipleRAGModel(db_path="../math_notebook_db")
 
     # 3. 预测
-    print("\n🚀 Running Prediction (Baseline 1, Baseline 2, SC-3 + RAG)...")
-    # baseline_require=True 会返回 Baseline 1 (SC Fallback) 和 Baseline 2 (Greedy) 的结果
+    print(f"\n🚀 开始预测 {len(questions)} 道题目 (Baseline 1, 2, 3 + Final)...")
     results = model.predict(questions, baseline_require=True)
 
     # 4. 评测
-    print("\n📈 计算最终统计数据...")
+    print("\n📈 计算统计数据 (使用 MathEvaluator)...")
     evaluator = MathEvaluator()
     
-    correct_baseline_1 = 0 # SC Fallback
-    correct_baseline_2 = 0 # Greedy
-    correct_final = 0      # SC + RAG
+    cnt_b1 = 0
+    cnt_b2 = 0
+    cnt_b3 = 0
+    cnt_final = 0
     
-    inconsistent_count = 0
-    rag_fixed_count = 0 # Baseline 1 Wrong -> RAG Correct
+    inconsistent_total = 0
+    
+    # 专门统计“不一致”子集里的表现
+    inc_rag_correct = 0     # Final (RAG)
+    inc_sc_correct = 0      # Baseline 2 (SC Majority)
+    inc_greedy_correct = 0  # Baseline 3 (Greedy)
     
     total = len(questions)
-    
     final_results = []
     
     for i, res in enumerate(results):
         gt = ground_truths[i]
+        
+        # 使用 MathEvaluator 进行特殊的数学等价性验证
+        # verify 返回 (bool, extracted_answer)
+        b1_ok, _ = evaluator.verify(res.get('baseline_1', ''), gt)
+        b2_ok, _ = evaluator.verify(res.get('baseline_2', ''), gt)
+        b3_ok, _ = evaluator.verify(res.get('baseline_3', ''), gt)
+        final_ok, _ = evaluator.verify(res.get('final_answer', ''), gt)
+        
+        if b1_ok: cnt_b1 += 1
+        if b2_ok: cnt_b2 += 1
+        if b3_ok: cnt_b3 += 1
+        if final_ok: cnt_final += 1
+
+        # 深入分析不一致的情况
+        if not res.get("is_consistent", True):
+            inconsistent_total += 1
+            if final_ok: inc_rag_correct += 1
+            if b2_ok: inc_sc_correct += 1
+            if b3_ok: inc_greedy_correct += 1
+        
+        # 补充信息用于保存
         res['ground_truth'] = gt
         res['dataset_type'] = dataset_types[i]
-        res['id'] = i
-        
-        # 1. 验证 Baseline 2 (Greedy)
-        is_b2_correct, b2_extracted = evaluator.verify(res.get('baseline_2_raw', ''), gt)
-        res['baseline_2_prediction'] = b2_extracted
-        res['is_baseline_2_correct'] = is_b2_correct
-        if is_b2_correct:
-            correct_baseline_2 += 1
-            
-        # 2. 验证 Baseline 1 (SC Fallback)
-        is_b1_correct, b1_extracted = evaluator.verify(res.get('baseline_1_raw', ''), gt)
-        res['baseline_1_prediction'] = b1_extracted
-        res['is_baseline_1_correct'] = is_b1_correct
-        if is_b1_correct:
-            correct_baseline_1 += 1
-            
-        # 3. 验证 Final (SC-3 + RAG)
-        is_final_correct, final_extracted = evaluator.verify(res.get('raw_output', ''), gt)
-        res['final_prediction'] = final_extracted
-        res['is_correct'] = is_final_correct
-        if is_final_correct:
-            correct_final += 1
-
-        # 4. 统计 RAG 修正情况
-        # 如果 RAG 流程被触发 (即 SC 不一致)
-        if "RAG" in res.get('method', ''):
-            inconsistent_count += 1
-            # 只有当 Baseline 1 错误 且 RAG 正确时，才算修正
-            if (not is_b1_correct) and is_final_correct:
-                rag_fixed_count += 1
-                
+        res['is_correct'] = final_ok
+        res['is_baseline_3_correct'] = b3_ok
         final_results.append(res)
 
-    acc_baseline_1 = correct_baseline_1 / total * 100
-    acc_baseline_2 = correct_baseline_2 / total * 100
-    acc_final = correct_final / total * 100
+    # 计算全局准确率
+    acc_b1 = cnt_b1 / total * 100
+    acc_b2 = cnt_b2 / total * 100
+    acc_b3 = cnt_b3 / total * 100
+    acc_final = cnt_final / total * 100
     
-    # 相对于不consistent的比值
-    ratio_relative_to_inconsistent = (rag_fixed_count / inconsistent_count * 100) if inconsistent_count > 0 else 0.0
+    # 计算 Inconsistent 子集内的准确率
+    acc_inc_rag = (inc_rag_correct / inconsistent_total * 100) if inconsistent_total else 0
+    acc_inc_sc = (inc_sc_correct / inconsistent_total * 100) if inconsistent_total else 0
+    acc_inc_greedy = (inc_greedy_correct / inconsistent_total * 100) if inconsistent_total else 0
     
-    # 相对于总题目数的比值
-    ratio_relative_to_total = (rag_fixed_count / total * 100)
-    
-    print(f"\n{'='*20} Evaluation Results {'='*20}")
+    print(f"\n{'='*20} Evaluation Results (MATH) {'='*20}")
     print(f"Total Questions: {total}")
-    print(f"Baseline 2 (Greedy) Accuracy: {acc_baseline_2:.2f}%")
-    print(f"Baseline 1 (SC-3 Fallback) Accuracy: {acc_baseline_1:.2f}%")
-    print(f"SC-3 + RAG Accuracy: {acc_final:.2f}%")
+    print(f"Baseline 1 (Direct Greedy):              {acc_b1:.2f}%")
+    print(f"Baseline 2 (SC Majority Vote):           {acc_b2:.2f}%")
+    print(f"Baseline 3 (SC Consistent + Greedy):     {acc_b3:.2f}%")
+    print(f"Final      (SC Consistent + RAG):        {acc_final:.2f}%")
     print(f"-"*40)
-    print(f"Inconsistent Questions (RAG Triggered): {inconsistent_count}")
-    print(f"RAG Fixed Wrong Questions: {rag_fixed_count}")
-    print(f"RAG Correction Rate (relative to Inconsistent): {ratio_relative_to_inconsistent:.2f}%")
-    print(f"RAG Correction Rate (relative to Total): {ratio_relative_to_total:.2f}%")
-    print(f"{'='*60}")
+    print(f"Inconsistent Questions (subset size):    {inconsistent_total}")
+    print(f"--- Battle in the Inconsistent Set ---")
+    print(f"  [Baseline 2] SC Majority Acc:          {acc_inc_sc:.2f}%")
+    print(f"  [Baseline 3] Greedy Acc:               {acc_inc_greedy:.2f}%")
+    print(f"  [Final]      RAG Acc:                  {acc_inc_rag:.2f}%")
+    print(f"-"*40)
     
+    # 结论分析
+    diff_rag_greedy = acc_final - acc_b3
+
     OUTPUT_FILE = "math_eval_result.json"
     with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
-        # 处理 retrieved_context 里的对象，转为 dict 或 str
-        for r in final_results:
-            if 'retrieved_context' in r and r['retrieved_context']:
-                # 假设 retrieved_context 是 list of dict
-                pass 
         json.dump(final_results, f, ensure_ascii=False, indent=2, default=str)
     print(f"📄 详细评测日志已保存至: {OUTPUT_FILE}")
 
