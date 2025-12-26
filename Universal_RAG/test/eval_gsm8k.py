@@ -9,15 +9,15 @@ from Universal_RAG.core import PrincipleRAGModel
 from Universal_RAG.utils import default_check_correct, extract_answer
 
 def main():
-    # 1. 准备数据
-    print("📂 加载测试集 (GSM8K Test)...")
+    # 1. Prepare data
+    print("📂 Loading test set (GSM8K Test)...")
     try:
         dataset = load_dataset("gsm8k", "main")['test']
     except:
-        print("⚠️ 无法加载 HuggingFace 数据集，尝试本地加载或退出。")
+        print("⚠️ Unable to load HuggingFace dataset, trying local load or exit.")
         return
 
-    # 固定随机种子
+    # Fix random seed
     random.seed(42)
     indices = list(range(len(dataset)))
     random.shuffle(indices)
@@ -26,17 +26,17 @@ def main():
     questions = [dataset[i]['question'] for i in indices]
     ground_truths = [dataset[i]['answer'] for i in indices]
 
-    # 2. 初始化模型
-    print("🤖 初始化模型...")
-    # ⚠️ 请确保这个路径下真的有 math_notebook_db/index.faiss 和 math_notebook_db/meta.json
+    # 2. Initialize model
+    print("🤖 Initializing model...")
+    # ⚠️ Please make sure there is math_notebook_db/index.faiss and math_notebook_db/meta.json in this path
     model = PrincipleRAGModel(db_path="../math_notebook_db")
 
-    # 3. 预测
-    print(f"\n🚀 开始预测 {len(questions)} 道题目...")
+    # 3. Prediction
+    print(f"\n🚀 Start predicting {len(questions)} questions...")
     results = model.predict(questions, baseline_require=True)
 
-    # 4. 评测统计
-    print("\n📈 计算统计数据...")
+    # 4. Evaluation statistics
+    print("\n📈 Calculating statistics...")
     
     cnt_b1, cnt_b2, cnt_b3, cnt_final = 0, 0, 0, 0
     inconsistent_total = 0
@@ -60,7 +60,7 @@ def main():
         if b3_ok: cnt_b3 += 1
         if final_ok: cnt_final += 1
             
-        # 不一致子集统计
+        # Inconsistent subset statistics
         if not res.get("is_consistent", True):
             inconsistent_total += 1
             if final_ok: inc_rag_correct += 1
@@ -71,7 +71,7 @@ def main():
         res['is_correct'] = final_ok
         final_results.append(res)
 
-    # 准确率计算
+    # Accuracy calculation
     acc_b1 = cnt_b1 / total * 100
     acc_b2 = cnt_b2 / total * 100
     acc_b3 = cnt_b3 / total * 100
@@ -95,16 +95,16 @@ def main():
     print(f"  [Final]      RAG Acc:                  {acc_inc_rag:.2f}%")
     print(f"{'='*60}")
     
-    # 简单的 Debug 提示
+    # Simple debug tip
     if acc_inc_rag == acc_inc_sc:
-        print("⚠️ 警告: RAG Accuracy 与 SC Accuracy 完全一致。")
-        print("   可能原因: 1. 检索结果为空。 2. LLM 忽略了 Context。 3. 代码未正确传入 Prompt。")
-        print("   请检查上方日志中的 '检索统计'。")
+        print("⚠️ Warning: RAG Accuracy is exactly the same as SC Accuracy.")
+        print("   Possible reasons: 1. Retrieval results are empty. 2. LLM ignored the Context. 3. Prompt not passed correctly.")
+        print("   Please check the 'retrieval statistics' in the log above.")
     
     output_file = "gsm8k_eval_result.json"
     with open(output_file, 'w', encoding='utf-8') as f:
         json.dump(final_results, f, ensure_ascii=False, indent=2, default=str)
-    print(f"📄 结果已保存至: {output_file}")
+    print(f"📄 Results saved to: {output_file}")
 
 if __name__ == "__main__":
     main()

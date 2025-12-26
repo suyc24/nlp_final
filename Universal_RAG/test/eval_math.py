@@ -99,13 +99,13 @@ def main():
         res['is_baseline_3_correct'] = b3_ok
         final_results.append(res)
 
-    # 计算全局准确率
+    # Calculate global accuracy
     acc_b1 = cnt_b1 / total * 100
     acc_b2 = cnt_b2 / total * 100
     acc_b3 = cnt_b3 / total * 100
     acc_final = cnt_final / total * 100
     
-    # 计算 Inconsistent 子集内的准确率
+    # Calculate accuracy within the Inconsistent subset
     acc_inc_rag = (inc_rag_correct / inconsistent_total * 100) if inconsistent_total else 0
     acc_inc_sc = (inc_sc_correct / inconsistent_total * 100) if inconsistent_total else 0
     acc_inc_greedy = (inc_greedy_correct / inconsistent_total * 100) if inconsistent_total else 0
@@ -124,13 +124,13 @@ def main():
     print(f"  [Final]      RAG Acc:                  {acc_inc_rag:.2f}%")
     print(f"-"*40)
     
-    # 结论分析
+    # Conclusion analysis
     diff_rag_greedy = acc_final - acc_b3
 
     OUTPUT_FILE = "math_eval_result.json"
     with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
         json.dump(final_results, f, ensure_ascii=False, indent=2, default=str)
-    print(f"📄 详细评测日志已保存至: {OUTPUT_FILE}")
+    print(f"📄 Detailed evaluation log saved to: {OUTPUT_FILE}")
 
 if __name__ == "__main__":
     main()

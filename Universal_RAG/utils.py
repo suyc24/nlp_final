@@ -17,9 +17,6 @@ def extract_answer(text):
     return None
 
 def default_check_correct(pred, gt):
-    """
-    默认的 GSM8K 风格验证器 (数值比较)
-    """
     if isinstance(gt, str) and "####" in gt: gold = extract_answer(gt.split("####")[1])
     else: gold = extract_answer(gt)
     val = extract_answer(pred)

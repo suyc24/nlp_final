@@ -101,18 +101,9 @@ Pattern:<|im_end|>
 #     return f"<|im_start|>user\n{content}<|im_end|>\n<|im_start|>assistant\n"
 
 def construct_rag_prompt(q, hints):
-    # 1. 必须保留的回退逻辑 (配合你 llm_client 的修改，双重保险)
     if not hints: 
         return construct_base_prompt(q)
-    
-    # 2. 极简拼接
-    # 对于小模型，不要写 "Matched Scenario"，直接给干货(Strategy)
-    # 使用列表符号 "-" 引导，清晰且节省 Token
     strategies_text = "\n".join([f"- {h['strategy']}" for h in hints])
-    
-    # 3. 构造 Content
-    # 结构：[Tips] -> [Question] -> [Instruction]
-    # 这里的 Instruction 和 Base Prompt 保持高度一致
     content = f"""Reference Tips:
 {strategies_text}
 
